@@ -49,7 +49,7 @@ Download the [**FlatCam Face Dataset**](https://computationalimaging.rice.edu/da
 1. Split the data into train/test.
    ```bash
    cd fc_data_process/
-   python prep_data_recog_complete.py --data_path "path_to_input_data/" --out_path "path_to_splitted_data/"
+   python prep_data_recog_complete.py --data_path <path_to_input_data> --out_path <path_to_splitted_data>"
    ```
 2. [Optional] Run the following to generate pseudo-random noise locations. Skip this step to use pre-computed noise locations in [noise_locations](https://github.com/engrchrishenry/lensless_face_recognition/tree/main/data/noise_locations) consistent with the paper.
    ```bash
@@ -57,8 +57,8 @@ Download the [**FlatCam Face Dataset**](https://computationalimaging.rice.edu/da
    ```
 3. Generate the lensless dataset containing the proposed Multi-resolution DCT Subband Representation. May consume a couple of minutes to process.
    ```bash
-   python process_raw_fc_meas.py --data_path "path_to_splitted_data/train" --out_path "path_to_output_folder/train"
-   python process_raw_fc_meas.py --data_path "path_to_splitted_data/test" --out_path "path_to_output_folder/test"
+   python process_raw_fc_meas.py --data_path <path_to_splitted_data/train> --out_path <path_to_output_folder/train>
+   python process_raw_fc_meas.py --data_path <path_to_splitted_data/test> --out_path <path_to_output_folder/test>
    ```
    Output folders:
 
