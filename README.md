@@ -80,18 +80,18 @@ python train.py --train_data "lensless_data/train/ymdct_npy" --test_data "lensle
 
 Download the [pre-trained weights](https://mailmissouri-my.sharepoint.com/:u:/g/personal/chffn_umsystem_edu/IQAI5HfkPTPnT4zYokmAKaLCAUGn34FcO1CFXHa0eA3iARw?e=nkmEhg) or train the network from scratch and copy the weights to the [weights](https://github.com/engrchrishenry/lensless_face_recognition/tree/main/weights) folder.
 
-### Face Recognition (ymdct)
- ```bash
- python test_face_recognition.py --test_data "lensless_data/test/ymdct_npy" --weights "weights/pretrained_weights.pth" --batch_size 64
- ```
-### Face Recognition (ymdct with pseudo-random noise)
- ```bash
- python test_face_recognition.py --test_data "lensless_data/test/ymdct_noisy_npy_10px_per_block" --weights "weights/pretrained_weights.pth" --noise_locs "data/noise_locations/noise_10px_per_block.npy"  --batch_size 64
- ```
-### Face Verification
-```bash
- python test_face_verification.py --test_data "lensless_data/test/ymdct_npy" --pairs "data/verification_pairs.txt" --weights "weights/pretrained_weights.pth" --noise_locs "data/noise_locations/noise_10px_per_block.npy"  --batch_size 64
-```
+- ### Face Recognition (ymdct)
+   ```bash
+   python test_face_recognition.py --test_data "lensless_data/test/ymdct_npy" --weights "weights/pretrained_weights.pth" --batch_size 64
+   ```
+- ### Face Recognition (ymdct with pseudo-random noise)
+  ```bash
+  python test_face_recognition.py --test_data "lensless_data/test/ymdct_noisy_npy_10px_per_block" --weights "weights/pretrained_weights.pth" --noise_locs "data/noise_locations/noise_10px_per_block.npy"  --batch_size 64
+  ```
+- ### Face Verification
+  ```bash
+   python test_face_verification.py --test_data "lensless_data/test/ymdct_npy" --pairs "data/verification_pairs.txt" --weights "weights/pretrained_weights.pth" --noise_locs "data/noise_locations/noise_10px_per_block.npy"  --batch_size 64
+  ```
 [test_face_verification.py](https://github.com/engrchrishenry/lensless_face_recognition/blob/main/test_face_verification.py) outputs a 'results.json' file containing 'true_labels' and 'pred_scores' which could be used for computing TPR, FPR, and AUC.
 
 ## Citations
