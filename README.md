@@ -92,7 +92,7 @@ Download the [pre-trained weights](https://mailmissouri-my.sharepoint.com/:u:/g/
   ```bash
    python test_face_verification.py --test_data "lensless_data/test/ymdct_npy" --pairs "data/verification_pairs.txt" --weights "weights/pretrained_weights.pth" --noise_locs "data/noise_locations/noise_10px_per_block.npy"  --batch_size 64
   ```
-[test_face_verification.py](https://github.com/engrchrishenry/lensless_face_recognition/blob/main/test_face_verification.py) outputs a 'results.json' file containing 'true_labels' and 'pred_scores' which could be used for computing TPR, FPR, and AUC.
+  [test_face_verification.py](https://github.com/engrchrishenry/lensless_face_recognition/blob/main/test_face_verification.py) outputs a 'results.json' file containing 'true_labels' and 'pred_scores' which could be used for computing TPR, FPR, and AUC.
 
 ## Citations
 
