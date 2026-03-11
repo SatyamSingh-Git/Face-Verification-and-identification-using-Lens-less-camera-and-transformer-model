@@ -4,6 +4,7 @@ import torch.utils.data
 from PIL import Image
 import numpy as np
 from models.proposed_model import proposed_net
+from models.transformer_model import DCT_ViT
 from my_data_class import Lensless_DCT_offline, Lensless_DCT_offline_noise
 from torch.autograd import Variable
 
@@ -32,6 +33,7 @@ def parse_args():
         default=None,
         help="Path to noise locations .npy file. See data/noise_locations/."
     )
+    parser.add_argument('--model', default='cnn', type=str, choices=['cnn', 'transformer'], help='Model type: cnn or transformer')
     
 
     return parser.parse_args()
@@ -40,7 +42,11 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()
 
-    net = proposed_net(3).cuda()
+    if args.model == 'transformer':
+        net = DCT_ViT(in_channels=3, num_classes=87, embed_dim=256, depth=6, num_heads=8, seq_length=16, num_subbands=5).cuda()
+    else:
+        net = proposed_net(3).cuda()
+        
     checkpoint = torch.load(args.weights)
     net.load_state_dict(checkpoint)
     net.eval()
@@ -61,7 +67,12 @@ if __name__ == "__main__":
         targets = targets.cuda()
         x1, x2, x3, x4, x5, targets = Variable(x1), Variable(x2), Variable(x3), Variable(x4), Variable(x5), Variable(
             targets)
-        outputs = net(x1, x2, x3, x4, x5)
+            
+        if args.model == 'transformer':
+            x = torch.cat((x1, x2, x3, x4, x5), dim=1)
+            outputs = net(x)
+        else:
+            outputs = net(x1, x2, x3, x4, x5)
 
         _, predicted = torch.max(outputs.data, 1)
         total += targets.size(0)

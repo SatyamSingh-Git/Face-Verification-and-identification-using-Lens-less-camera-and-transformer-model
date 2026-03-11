@@ -13,8 +13,9 @@ import argparse
 
 from models import proposed_model
 from utils import progress_bar
+from models.transformer_model import DCT_ViT
 from torch.autograd import Variable
-from torch.optim.lr_scheduler import StepLR
+from torch.optim.lr_scheduler import StepLR, CosineAnnealingLR
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
 
@@ -28,6 +29,7 @@ def parse_args():
     parser.add_argument('--lr', default=0.05, type=float, help='Learning rate')
     parser.add_argument('--num_workers', default=3, type=int, help='Number of workers')
     parser.add_argument('--num_epoch', default=100, type=int, help='Number of epochs')
+    parser.add_argument('--model', default='cnn', type=str, choices=['cnn', 'transformer'], help='Model type: cnn or transformer')
 
     return parser.parse_args()
 
@@ -54,7 +56,11 @@ if __name__ == "__main__":
 
     # Model
     print('==> Building model..')
-    net = proposed_model.proposed_net(3)
+    if args.model == 'transformer':
+        net = DCT_ViT(in_channels=3, num_classes=87, embed_dim=256, depth=6, num_heads=8, seq_length=16, num_subbands=5)
+    else:
+        net = proposed_model.proposed_net(3)
+        
     if use_cuda:
         net.cuda()
         cudnn.benchmark = True
@@ -63,8 +69,13 @@ if __name__ == "__main__":
     print ('num_parameters =', num_parameters)
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
-    scheduler = StepLR(optimizer, 50)
+    
+    if args.model == 'transformer':
+        optimizer = optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
+        scheduler = CosineAnnealingLR(optimizer, T_max=args.num_epoch)
+    else:
+        optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
+        scheduler = StepLR(optimizer, 50)
 
     # Training
     def train(epoch):
@@ -80,7 +91,12 @@ if __name__ == "__main__":
                 x1, x2, x3, x4, x5 = x1.cuda(), x2.cuda(), x3.cuda(), x4.cuda(), x5.cuda()
             x1, x2, x3, x4, x5, targets = Variable(x1), Variable(x2), Variable(x3), Variable(x4), Variable(x5), Variable(targets)
             optimizer.zero_grad()
-            outputs = net(x1, x2, x3, x4, x5)
+            
+            if args.model == 'transformer':
+                x = torch.cat((x1, x2, x3, x4, x5), dim=1)
+                outputs = net(x)
+            else:
+                outputs = net(x1, x2, x3, x4, x5)
             
             loss = criterion(outputs, targets)
             loss.backward()
@@ -112,7 +128,12 @@ if __name__ == "__main__":
                 targets = targets.cuda()
                 x1, x2, x3, x4, x5 = x1.cuda(), x2.cuda(), x3.cuda(), x4.cuda(), x5.cuda()
             x1, x2, x3, x4, x5, targets = Variable(x1), Variable(x2), Variable(x3), Variable(x4), Variable(x5), Variable(targets)
-            outputs = net(x1, x2, x3, x4, x5)
+            
+            if args.model == 'transformer':
+                x = torch.cat((x1, x2, x3, x4, x5), dim=1)
+                outputs = net(x)
+            else:
+                outputs = net(x1, x2, x3, x4, x5)
             
             loss = criterion(outputs, targets)
 

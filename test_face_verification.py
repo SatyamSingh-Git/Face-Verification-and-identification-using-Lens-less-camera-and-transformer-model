@@ -3,6 +3,7 @@ import os
 import torch
 import numpy as np
 from models.proposed_model import proposed_net
+from models.transformer_model import DCT_ViT
 from scipy.spatial.distance import cosine
 import json
 from sklearn import metrics
@@ -38,6 +39,7 @@ def parse_args():
         default=0.5,
         type=float,
         help='Threshold value for cosine similarity used for deciding between match or no-match.')
+    parser.add_argument('--model', default='cnn', type=str, choices=['cnn', 'transformer'], help='Model type: cnn or transformer')
     
     return parser.parse_args()
 
@@ -45,9 +47,14 @@ def parse_args():
 if __name__ == "__main__":
     args = parse_args()    
 
-    net = proposed_net(3).cuda()
-    net.load_state_dict(torch.load(args.weights))
-    net.classifier = net.classifier[:-3]
+    if args.model == 'transformer':
+        net = DCT_ViT(in_channels=3, num_classes=87, embed_dim=256, depth=6, num_heads=8, seq_length=16, num_subbands=5).cuda()
+        net.load_state_dict(torch.load(args.weights))
+        net.classifier = nn.Sequential(*list(net.classifier.children())[:-3])
+    else:
+        net = proposed_net(3).cuda()
+        net.load_state_dict(torch.load(args.weights))
+        net.classifier = net.classifier[:-3]
     # print (net.classifier)
     net.eval()
 
@@ -75,7 +82,11 @@ if __name__ == "__main__":
                 x3 = n_arr_1[6:9, :, :].unsqueeze(0)
                 x4 = n_arr_1[9:12, :, :].unsqueeze(0)
                 x5 = n_arr_1[12:15, :, :].unsqueeze(0)
-                output_1 = net(x1, x2, x3, x4, x5).cpu().detach().numpy()
+                if args.model == 'transformer':
+                    x = torch.cat((x1, x2, x3, x4, x5), dim=1)
+                    output_1 = net(x).cpu().detach().numpy()
+                else:
+                    output_1 = net(x1, x2, x3, x4, x5).cpu().detach().numpy()
                 output_1 = output_1.reshape(-1)
                 
                 x1 = n_arr_2[0:3, :, :].unsqueeze(0)
@@ -83,7 +94,11 @@ if __name__ == "__main__":
                 x3 = n_arr_2[6:9, :, :].unsqueeze(0)
                 x4 = n_arr_2[9:12, :, :].unsqueeze(0)
                 x5 = n_arr_2[12:15, :, :].unsqueeze(0)
-                output_2 = net(x1, x2, x3, x4, x5).cpu().detach().numpy()
+                if args.model == 'transformer':
+                    x = torch.cat((x1, x2, x3, x4, x5), dim=1)
+                    output_2 = net(x).cpu().detach().numpy()
+                else:
+                    output_2 = net(x1, x2, x3, x4, x5).cpu().detach().numpy()
                 output_2 = output_2.reshape(-1)
 
                 score = 1 - cosine(output_1, output_2)
