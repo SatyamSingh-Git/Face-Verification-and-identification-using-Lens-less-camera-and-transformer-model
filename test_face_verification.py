@@ -1,6 +1,7 @@
 import argparse
 import os
 import torch
+import torch.nn as nn
 import numpy as np
 from models.proposed_model import proposed_net
 from models.transformer_model import DCT_ViT
