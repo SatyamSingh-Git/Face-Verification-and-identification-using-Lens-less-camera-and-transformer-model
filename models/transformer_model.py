@@ -1,107 +1,109 @@
 import torch
 import torch.nn as nn
-from torch.autograd import Variable
+import torch.nn.functional as F
+import torchvision.models as models
 
-class CNNStem(nn.Module):
-    def __init__(self, in_channels):
-        super(CNNStem, self).__init__()
-        self.conv = nn.Sequential(
-            nn.Conv2d(in_channels, 32, kernel_size=3, padding=1),
-            nn.BatchNorm2d(32),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(inplace=True),
-            nn.MaxPool2d(kernel_size=2, stride=2)
-        )
+class HybridResNetTransformer(nn.Module):
+    def __init__(self, in_channels=15, embed_dim=512, depth=4, num_heads=8):
+        super(HybridResNetTransformer, self).__init__()
         
-    def forward(self, x):
-        return self.conv(x)
-
-class DCT_ViT(nn.Module):
-    def __init__(self, in_channels=3, num_classes=87, embed_dim=256, depth=6, num_heads=8, seq_length=16, num_subbands=5):
-        super(DCT_ViT, self).__init__()
-        
-        self.num_subbands = num_subbands
         self.embed_dim = embed_dim
         
-        # CNN Stems for each subband
-        self.stems = nn.ModuleList([CNNStem(in_channels) for _ in range(num_subbands)])
+        # 1. Pretrained ResNet18 Backbone
+        # Use models.resnet18(weights=models.ResNet18_Weights.IMAGENET1K_V1) for modern torchvision, 
+        # or pretrained=True for older.
+        resnet = models.resnet18(pretrained=True)
         
-        # Patch embedding: 64 channels, 8x8 patches -> embed_dim
-        self.patch_embed = nn.Conv2d(64, embed_dim, kernel_size=8, stride=8)
+        # Modify the first conv layer to accept 15 channels instead of 3
+        old_conv = resnet.conv1
+        self.conv1 = nn.Conv2d(in_channels, old_conv.out_channels, 
+                               kernel_size=old_conv.kernel_size, stride=old_conv.stride, 
+                               padding=old_conv.padding, bias=old_conv.bias is not None)
+        with torch.no_grad():
+            self.conv1.weight.data = old_conv.weight.data.repeat(1, 5, 1, 1) / 5.0
+            if old_conv.bias is not None:
+                self.conv1.bias.data = old_conv.bias.data
+                
+        self.bn1 = resnet.bn1
+        self.relu = resnet.relu
+        self.maxpool = resnet.maxpool
+        self.layer1 = resnet.layer1
+        self.layer2 = resnet.layer2
+        self.layer3 = resnet.layer3
+        self.layer4 = resnet.layer4
         
-        # Positional encodings
-        self.spatial_pos_embed = nn.Parameter(torch.randn(1, seq_length, embed_dim))
-        self.subband_embed = nn.Embedding(num_subbands, embed_dim)
+        # 2. Positional Encoding for 7x7 = 49 tokens
+        self.pos_embed = nn.Parameter(torch.randn(1, 49, embed_dim))
         
-        # CLS token
-        self.cls_token = nn.Parameter(torch.zeros(1, 1, embed_dim))
-        
-        # Encoder
+        # 3. Transformer Encoder
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=embed_dim, 
             nhead=num_heads, 
-            dim_feedforward=1024, 
+            dim_feedforward=2048, 
             dropout=0.1, 
             activation='gelu',
-            batch_first=True
+            batch_first=True,
+            norm_first=True
         )
-        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=depth)
-        
-        # Classifier
-        self.classifier = nn.Sequential(
-            nn.Linear(embed_dim, 512),
-            nn.ReLU(inplace=True),
-            nn.Dropout(0.1),
-            nn.Linear(512, num_classes)
-        )
+        self.transformer_encoder = nn.TransformerEncoder(encoder_layer, num_layers=depth, norm=nn.LayerNorm(embed_dim))
 
-    def forward(self, x):
+    def forward(self, x, tta=False):
         """
-        x: (B, 15, 64, 64) - The stacked 5 subbands, 3 channels each
+        x: (B, 15, 64, 64)
         """
-        B = x.size(0)
+        # Resize to 224x224
+        x = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
         
-        # Split into 5 subbands
-        x_subbands = [x[:, i*3:(i+1)*3, :, :] for i in range(self.num_subbands)]
-        
-        tokens_list = []
-        for i, (stem, x_sub) in enumerate(zip(self.stems, x_subbands)):
-            # CNN stem -> (B, 64, 32, 32)
-            features = stem(x_sub)
+        def extract_feats(x_in):
+            # ResNet Feature Extraction
+            out = self.conv1(x_in)
+            out = self.bn1(out)
+            out = self.relu(out)
+            out = self.maxpool(out)
+            out = self.layer1(out)
+            out = self.layer2(out)
+            out = self.layer3(out)
+            out = self.layer4(out) # (B, 512, 7, 7)
             
-            # Patch embedding -> (B, embed_dim, 4, 4)
-            patches = self.patch_embed(features)
+            # Tokenization
+            out = out.flatten(2).transpose(1, 2) # (B, 49, 512)
+            out = out + self.pos_embed
             
-            # Flatten spatial dims -> (B, embed_dim, 16) -> (B, 16, embed_dim)
-            tokens = patches.flatten(2).transpose(1, 2)
+            # Transformer
+            out = self.transformer_encoder(out)
             
-            # Add spatial pos embedding and subband embedding
-            tokens = tokens + self.spatial_pos_embed + self.subband_embed(torch.tensor(i, device=x.device)).unsqueeze(0).unsqueeze(0)
+            # Global Mean Pooling
+            out = out.mean(dim=1) # (B, 512)
             
-            tokens_list.append(tokens)
+            # L2 Normalize
+            out = F.normalize(out, p=2, dim=1)
+            return out
             
-        # Concat all subband tokens -> (B, 5 * 16, embed_dim)
-        x_encoded = torch.cat(tokens_list, dim=1)
-        
-        # Prepend CLS token
-        cls_tokens = self.cls_token.expand(B, -1, -1)
-        x_encoded = torch.cat((cls_tokens, x_encoded), dim=1)
-        
-        # Transformer encoder
-        x_encoded = self.transformer_encoder(x_encoded)
-        
-        # Take the output of the CLS token
-        cls_out = x_encoded[:, 0, :]
-        
-        # Classify
-        out = self.classifier(cls_out)
-        return out
+        if not tta:
+            return extract_feats(x)
+        else:
+            # TTA: Original, Flipped, Blurred
+            feat_orig = extract_feats(x)
+            feat_flip = extract_feats(torch.flip(x, dims=[3]))
+            
+            import torchvision.transforms.functional as TF
+            feat_blur = extract_feats(TF.gaussian_blur(x, kernel_size=[3, 3]))
+            
+            # Average and re-normalize
+            feat_avg = (feat_orig + feat_flip + feat_blur) / 3.0
+            return F.normalize(feat_avg, p=2, dim=1)
 
 if __name__ == '__main__':
-    net = DCT_ViT()
+    from arcface import ArcMarginProduct
+    net = HybridResNetTransformer(embed_dim=512)
+    metric_fc = ArcMarginProduct(512, 87)
+    
     x = torch.randn(2, 15, 64, 64)
-    out = net(Variable(x))
-    print("Output size:", out.size())
-    print("Parameters:", sum(p.numel() for p in net.parameters() if p.requires_grad))
+    labels = torch.randint(0, 87, (2,))
+    
+    features = net(x)
+    print("Features extracted shape:", features.size())
+    
+    output = metric_fc(features, labels)
+    print("ArcFace Output size:", output.size())
+    print("Hybrid Model Parameters:", sum(p.numel() for p in net.parameters() if p.requires_grad))

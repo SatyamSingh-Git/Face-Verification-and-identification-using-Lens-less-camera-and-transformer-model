@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 from models.proposed_model import proposed_net
-from models.transformer_model import DCT_ViT
+from models.transformer_model import HybridResNetTransformer
 from scipy.spatial.distance import cosine
 import json
 from sklearn import metrics
@@ -49,9 +49,13 @@ if __name__ == "__main__":
     args = parse_args()    
 
     if args.model == 'transformer':
-        net = DCT_ViT(in_channels=3, num_classes=87, embed_dim=256, depth=6, num_heads=8, seq_length=16, num_subbands=5).cuda()
-        net.load_state_dict(torch.load(args.weights))
-        net.classifier = nn.Sequential(*list(net.classifier.children())[:-3])
+        net = HybridResNetTransformer(in_channels=15, embed_dim=512, depth=4, num_heads=8).cuda()
+        checkpoint = torch.load(args.weights)
+        if isinstance(checkpoint, dict) and 'net' in checkpoint:
+            net.load_state_dict(checkpoint['net'])
+        else:
+            net.load_state_dict(checkpoint) # fallback
+        # The HybridResNetTransformer natively outputs 512D embeddings!
     else:
         net = proposed_net(3).cuda()
         net.load_state_dict(torch.load(args.weights))
@@ -85,7 +89,7 @@ if __name__ == "__main__":
                 x5 = n_arr_1[12:15, :, :].unsqueeze(0)
                 if args.model == 'transformer':
                     x = torch.cat((x1, x2, x3, x4, x5), dim=1)
-                    output_1 = net(x).cpu().detach().numpy()
+                    output_1 = net(x, tta=True).cpu().detach().numpy()
                 else:
                     output_1 = net(x1, x2, x3, x4, x5).cpu().detach().numpy()
                 output_1 = output_1.reshape(-1)
@@ -97,7 +101,7 @@ if __name__ == "__main__":
                 x5 = n_arr_2[12:15, :, :].unsqueeze(0)
                 if args.model == 'transformer':
                     x = torch.cat((x1, x2, x3, x4, x5), dim=1)
-                    output_2 = net(x).cpu().detach().numpy()
+                    output_2 = net(x, tta=True).cpu().detach().numpy()
                 else:
                     output_2 = net(x1, x2, x3, x4, x5).cpu().detach().numpy()
                 output_2 = output_2.reshape(-1)

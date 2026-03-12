@@ -13,9 +13,32 @@ import argparse
 
 from models import proposed_model
 from utils import progress_bar
-from models.transformer_model import DCT_ViT
+from models.transformer_model import HybridResNetTransformer
+from models.arcface import ArcMarginProduct
 from torch.autograd import Variable
 from torch.optim.lr_scheduler import StepLR, CosineAnnealingLR
+import numpy as np
+
+def mixup_data(x, y, alpha=0.2, use_cuda=True):
+    if alpha > 0:
+        lam = np.random.beta(alpha, alpha)
+    else:
+        lam = 1
+    batch_size = x.size()[0]
+    if use_cuda:
+        index = torch.randperm(batch_size).cuda()
+    else:
+        index = torch.randperm(batch_size)
+    mixed_x = lam * x + (1 - lam) * x[index, :]
+    y_a, y_b = y, y[index]
+    return mixed_x, y_a, y_b, lam
+
+def mixup_criterion(criterion, pred, y_a, y_b, lam):
+    return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
+
+def add_gaussian_noise(x, std=0.05):
+    noise = torch.randn_like(x) * std
+    return x + noise
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
 
@@ -57,7 +80,10 @@ if __name__ == "__main__":
     # Model
     print('==> Building model..')
     if args.model == 'transformer':
-        net = DCT_ViT(in_channels=3, num_classes=87, embed_dim=256, depth=6, num_heads=8, seq_length=16, num_subbands=5)
+        net = HybridResNetTransformer(in_channels=15, embed_dim=512, depth=4, num_heads=8)
+        metric_fc = ArcMarginProduct(512, 87, s=64.0, m=0.5)
+        if use_cuda:
+            metric_fc.cuda()
     else:
         net = proposed_model.proposed_net(3)
         
@@ -71,7 +97,8 @@ if __name__ == "__main__":
     criterion = nn.CrossEntropyLoss()
     
     if args.model == 'transformer':
-        optimizer = optim.AdamW(net.parameters(), lr=args.lr, weight_decay=1e-4)
+        # Optimize both backbone + arcface layers
+        optimizer = optim.AdamW([{'params': net.parameters()}, {'params': metric_fc.parameters()}], lr=3e-4, weight_decay=1e-4)
         scheduler = CosineAnnealingLR(optimizer, T_max=args.num_epoch)
     else:
         optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
@@ -94,18 +121,36 @@ if __name__ == "__main__":
             
             if args.model == 'transformer':
                 x = torch.cat((x1, x2, x3, x4, x5), dim=1)
-                outputs = net(x)
+                
+                # Apply Augmentations (Gaussian Noise + Mixup)
+                x = add_gaussian_noise(x, std=0.05)
+                x, targets_a, targets_b, lam = mixup_data(x, targets, alpha=0.2, use_cuda=use_cuda)
+                
+                features = net(x)
+                outputs = metric_fc(features, targets) # ArcFace requires targets for margin penalty during training
+                loss = mixup_criterion(criterion, outputs, targets_a, targets_b, lam)
             else:
                 outputs = net(x1, x2, x3, x4, x5)
+                loss = criterion(outputs, targets)
             
-            loss = criterion(outputs, targets)
             loss.backward()
+            
+            # Gradient clipping to prevent exploding gradients in arcface / transformer
+            if args.model == 'transformer':
+                torch.nn.utils.clip_grad_norm_(net.parameters(), max_norm=5.0)
+                torch.nn.utils.clip_grad_norm_(metric_fc.parameters(), max_norm=5.0)
+                
             optimizer.step()
 
             train_loss += loss.data
             _, predicted = torch.max(outputs.data, 1)
             total += targets.size(0)
-            correct += predicted.eq(targets.data).cpu().sum()
+            
+            # For MixUp accuracy, we just measure against the primary target
+            if args.model == 'transformer':
+                correct += (lam * predicted.eq(targets_a.data).cpu().sum().float() + (1 - lam) * predicted.eq(targets_b.data).cpu().sum().float())
+            else:
+                correct += predicted.eq(targets.data).cpu().sum()
 
             n_iter = (epoch - 1) * len(trainloader) + batch_idx + 1
             writer.add_scalar('Train/loss', loss.item(), n_iter)
@@ -131,7 +176,8 @@ if __name__ == "__main__":
             
             if args.model == 'transformer':
                 x = torch.cat((x1, x2, x3, x4, x5), dim=1)
-                outputs = net(x)
+                features = net(x)
+                outputs = metric_fc(features) # Call without labels to get regular logits at test time
             else:
                 outputs = net(x1, x2, x3, x4, x5)
             
@@ -151,7 +197,12 @@ if __name__ == "__main__":
         acc = 100.*correct/total
         if acc > best_acc:
             print('Saving..')
-            torch.save(net.state_dict(), os.path.join(log_dir, 'best.pth'))
+            state = {
+                'net': net.state_dict()
+            }
+            if args.model == 'transformer':
+                state['metric_fc'] = metric_fc.state_dict()
+            torch.save(state, os.path.join(log_dir, 'best.pth'))
             best_acc = acc
             with open(os.path.join(log_dir, 'details.txt'), 'w') as f:
                 f.write("{0:.4f}, {1}, lr={2}, batch={3}".format(acc, epoch, args.lr, args.batch_size))

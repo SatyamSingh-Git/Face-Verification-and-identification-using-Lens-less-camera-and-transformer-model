@@ -4,7 +4,8 @@ import torch.utils.data
 from PIL import Image
 import numpy as np
 from models.proposed_model import proposed_net
-from models.transformer_model import DCT_ViT
+from models.transformer_model import HybridResNetTransformer
+from models.arcface import ArcMarginProduct
 from my_data_class import Lensless_DCT_offline, Lensless_DCT_offline_noise
 from torch.autograd import Variable
 
@@ -41,15 +42,33 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
+    use_cuda = torch.cuda.is_available()
 
     if args.model == 'transformer':
-        net = DCT_ViT(in_channels=3, num_classes=87, embed_dim=256, depth=6, num_heads=8, seq_length=16, num_subbands=5).cuda()
-    else:
-        net = proposed_net(3).cuda()
+        net = HybridResNetTransformer(in_channels=15, embed_dim=512, depth=4, num_heads=8)
+        metric_fc = ArcMarginProduct(512, 87, s=64.0, m=0.5)
         
-    checkpoint = torch.load(args.weights)
-    net.load_state_dict(checkpoint)
-    net.eval()
+        checkpoint = torch.load(args.weights, map_location='cuda' if use_cuda else 'cpu')
+        # Check if it's the new dictionary format with 'net' and 'metric_fc'
+        if isinstance(checkpoint, dict) and 'net' in checkpoint:
+            net.load_state_dict(checkpoint['net'])
+            metric_fc.load_state_dict(checkpoint['metric_fc'])
+        else:
+            net.load_state_dict(checkpoint) # fallback
+            
+        if use_cuda:
+            net = net.cuda()
+            metric_fc = metric_fc.cuda()
+            
+        net.eval()
+        metric_fc.eval()
+        
+    else:
+        net = proposed_net(3)
+        if use_cuda:
+            net = net.cuda()
+        net.load_state_dict(torch.load(args.weights, map_location='cuda' if use_cuda else 'cpu'))
+        net.eval()
 
     if args.noise_locs is not None:
         positions = np.load(args.noise_locs)
@@ -70,7 +89,8 @@ if __name__ == "__main__":
             
         if args.model == 'transformer':
             x = torch.cat((x1, x2, x3, x4, x5), dim=1)
-            outputs = net(x)
+            features = net(x, tta=True)
+            outputs = metric_fc(features) # Get raw logits
         else:
             outputs = net(x1, x2, x3, x4, x5)
 
