@@ -61,9 +61,6 @@ if __name__ == "__main__":
         if use_cuda:
             net = net.cuda()
             metric_fc = metric_fc.cuda()
-            if torch.cuda.device_count() > 1:
-                print(f'==> Using {torch.cuda.device_count()} GPUs!')
-                net = nn.DataParallel(net)
             
         net.eval()
         metric_fc.eval()
@@ -72,9 +69,6 @@ if __name__ == "__main__":
         net = proposed_net(3)
         if use_cuda:
             net = net.cuda()
-            if torch.cuda.device_count() > 1:
-                print(f'==> Using {torch.cuda.device_count()} GPUs!')
-                net = nn.DataParallel(net)
         net.load_state_dict(torch.load(args.weights, map_location='cuda' if use_cuda else 'cpu'))
         net.eval()
 
