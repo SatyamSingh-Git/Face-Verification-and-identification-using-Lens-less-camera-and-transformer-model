@@ -123,15 +123,16 @@ if __name__ == "__main__":
     print ('AUC =', auc)
     
     output_dict = {
-        'true_labels': true_labels,
-        'pred_scores': pred_scores,
-        'thresh': args.thresh,
-        'acc': correct/len(lines)
+        'true_labels': [int(x) for x in true_labels],
+        'pred_scores': [float(x) for x in pred_scores],
+        'thresh': float(args.thresh),
+        'acc': float(correct/len(lines)),
+        'auc': float(auc)
     }
 
-    json = json.dumps(output_dict)
+    json_str = json.dumps(output_dict)
     f = open(args.out_file,"w")
-    f.write(json)
+    f.write(json_str)
     f.close()
 
 
