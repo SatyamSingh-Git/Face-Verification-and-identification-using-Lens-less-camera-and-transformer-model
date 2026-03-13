@@ -83,7 +83,7 @@ def parse_args():
     parser.add_argument('--batch_size', default=64, type=int, help='Batch size')
     parser.add_argument('--lr', default=0.05, type=float, help='Learning rate')
     parser.add_argument('--num_workers', default=3, type=int, help='Number of workers')
-    parser.add_argument('--num_epoch', default=150, type=int, help='Number of epochs')
+    parser.add_argument('--num_epoch', default=120, type=int, help='Number of epochs')
     parser.add_argument('--model', default='cnn', type=str, choices=['cnn', 'transformer'], help='Model type: cnn or transformer')
     parser.add_argument('--warmup_epochs', default=5, type=int, help='Number of warmup epochs')
     parser.add_argument('--freeze_epochs', default=10, type=int, help='Freeze early ResNet layers for this many epochs')
