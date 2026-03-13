@@ -56,10 +56,16 @@ if __name__ == "__main__":
         else:
             net.load_state_dict(checkpoint) # fallback
         # The HybridResNetTransformer natively outputs 512D embeddings!
+        if torch.cuda.device_count() > 1:
+            print(f'==> Using {torch.cuda.device_count()} GPUs!')
+            net = nn.DataParallel(net)
     else:
         net = proposed_net(3).cuda()
         net.load_state_dict(torch.load(args.weights))
         net.classifier = net.classifier[:-3]
+        if torch.cuda.device_count() > 1:
+            print(f'==> Using {torch.cuda.device_count()} GPUs!')
+            net = nn.DataParallel(net)
     # print (net.classifier)
     net.eval()
 

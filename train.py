@@ -90,6 +90,10 @@ if __name__ == "__main__":
     if use_cuda:
         net.cuda()
         cudnn.benchmark = True
+        # Multi-GPU support
+        if torch.cuda.device_count() > 1:
+            print(f'==> Using {torch.cuda.device_count()} GPUs with DataParallel!')
+            net = nn.DataParallel(net)
 
     num_parameters = sum(p.numel() for p in net.parameters() if p.requires_grad)
     print ('num_parameters =', num_parameters)
@@ -197,8 +201,10 @@ if __name__ == "__main__":
         acc = 100.*correct/total
         if acc > best_acc:
             print('Saving..')
+            # Strip 'module.' prefix from DataParallel so weights work on any setup
+            net_state = net.module.state_dict() if hasattr(net, 'module') else net.state_dict()
             state = {
-                'net': net.state_dict()
+                'net': net_state
             }
             if args.model == 'transformer':
                 state['metric_fc'] = metric_fc.state_dict()
