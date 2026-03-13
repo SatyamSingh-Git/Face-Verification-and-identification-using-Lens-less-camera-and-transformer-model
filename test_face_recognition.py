@@ -1,5 +1,7 @@
 import argparse
 import os
+import torch
+import torch.nn as nn
 import torch.utils.data
 from PIL import Image
 import numpy as np
