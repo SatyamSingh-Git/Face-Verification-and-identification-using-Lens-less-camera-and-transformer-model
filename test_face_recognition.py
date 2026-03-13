@@ -47,8 +47,8 @@ if __name__ == "__main__":
     use_cuda = torch.cuda.is_available()
 
     if args.model == 'transformer':
-        net = HybridResNetTransformer(in_channels=15, embed_dim=512, depth=4, num_heads=8)
-        metric_fc = ArcMarginProduct(512, 87, s=64.0, m=0.5)
+        net = HybridResNetTransformer(in_channels=15, embed_dim=512, depth=4, num_heads=8, out_dim=768)
+        metric_fc = ArcMarginProduct(768, 87, s=64.0, m=0.5, K=3)
         
         checkpoint = torch.load(args.weights, map_location='cuda' if use_cuda else 'cpu')
         # Check if it's the new dictionary format with 'net' and 'metric_fc'

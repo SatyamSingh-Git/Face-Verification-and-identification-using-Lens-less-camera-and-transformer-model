@@ -16,8 +16,9 @@ from utils import progress_bar
 from models.transformer_model import HybridResNetTransformer
 from models.arcface import ArcMarginProduct
 from torch.autograd import Variable
-from torch.optim.lr_scheduler import StepLR, CosineAnnealingLR
+from torch.optim.lr_scheduler import StepLR, CosineAnnealingLR, LambdaLR
 import numpy as np
+import random
 
 def mixup_data(x, y, alpha=0.2, use_cuda=True):
     if alpha > 0:
@@ -36,9 +37,40 @@ def mixup_data(x, y, alpha=0.2, use_cuda=True):
 def mixup_criterion(criterion, pred, y_a, y_b, lam):
     return lam * criterion(pred, y_a) + (1 - lam) * criterion(pred, y_b)
 
-def add_gaussian_noise(x, std=0.05):
-    noise = torch.randn_like(x) * std
-    return x + noise
+def augment_tensor(x, std=0.05):
+    """Apply augmentations directly on GPU tensors.
+    Includes: Gaussian noise, random horizontal flip, brightness/contrast jitter, random blur.
+    """
+    # 1. Gaussian noise
+    x = x + torch.randn_like(x) * std
+    
+    # 2. Random horizontal flip (50% chance)
+    if random.random() > 0.5:
+        x = torch.flip(x, dims=[3])
+    
+    # 3. Brightness jitter: scale by random factor in [0.8, 1.2]
+    brightness_factor = 0.8 + random.random() * 0.4
+    x = x * brightness_factor
+    
+    # 4. Contrast jitter: blend toward mean
+    if random.random() > 0.5:
+        contrast_factor = 0.8 + random.random() * 0.4
+        mean_val = x.mean()
+        x = contrast_factor * x + (1 - contrast_factor) * mean_val
+    
+    return x
+
+def get_warmup_cosine_scheduler(optimizer, warmup_epochs, total_epochs):
+    """Linear warmup for `warmup_epochs`, then cosine decay."""
+    def lr_lambda(epoch):
+        if epoch < warmup_epochs:
+            return float(epoch + 1) / float(warmup_epochs)
+        else:
+            progress = float(epoch - warmup_epochs) / float(max(1, total_epochs - warmup_epochs))
+            return 0.5 * (1.0 + math.cos(math.pi * progress))
+    return LambdaLR(optimizer, lr_lambda)
+
+import math
 from torch.utils.tensorboard import SummaryWriter
 from datetime import datetime
 
@@ -51,8 +83,10 @@ def parse_args():
     parser.add_argument('--batch_size', default=64, type=int, help='Batch size')
     parser.add_argument('--lr', default=0.05, type=float, help='Learning rate')
     parser.add_argument('--num_workers', default=3, type=int, help='Number of workers')
-    parser.add_argument('--num_epoch', default=100, type=int, help='Number of epochs')
+    parser.add_argument('--num_epoch', default=150, type=int, help='Number of epochs')
     parser.add_argument('--model', default='cnn', type=str, choices=['cnn', 'transformer'], help='Model type: cnn or transformer')
+    parser.add_argument('--warmup_epochs', default=5, type=int, help='Number of warmup epochs')
+    parser.add_argument('--freeze_epochs', default=10, type=int, help='Freeze early ResNet layers for this many epochs')
 
     return parser.parse_args()
 
@@ -80,10 +114,14 @@ if __name__ == "__main__":
     # Model
     print('==> Building model..')
     if args.model == 'transformer':
-        net = HybridResNetTransformer(in_channels=15, embed_dim=512, depth=4, num_heads=8)
-        metric_fc = ArcMarginProduct(512, 87, s=64.0, m=0.5)
+        net = HybridResNetTransformer(in_channels=15, embed_dim=512, depth=4, num_heads=8, out_dim=768)
+        metric_fc = ArcMarginProduct(768, 87, s=64.0, m=0.5, K=3)
         if use_cuda:
             metric_fc.cuda()
+        # Freeze early ResNet layers at the start
+        actual_net = net
+        actual_net.freeze_backbone_early_layers()
+        print('==> Froze early ResNet layers (conv1, bn1, layer1, layer2) for first', args.freeze_epochs, 'epochs')
     else:
         net = proposed_model.proposed_net(3)
         
@@ -103,7 +141,7 @@ if __name__ == "__main__":
     if args.model == 'transformer':
         # Optimize both backbone + arcface layers
         optimizer = optim.AdamW([{'params': net.parameters()}, {'params': metric_fc.parameters()}], lr=3e-4, weight_decay=1e-4)
-        scheduler = CosineAnnealingLR(optimizer, T_max=args.num_epoch)
+        scheduler = get_warmup_cosine_scheduler(optimizer, warmup_epochs=args.warmup_epochs, total_epochs=args.num_epoch)
     else:
         optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
         scheduler = StepLR(optimizer, 50)
@@ -126,12 +164,12 @@ if __name__ == "__main__":
             if args.model == 'transformer':
                 x = torch.cat((x1, x2, x3, x4, x5), dim=1)
                 
-                # Apply Augmentations (Gaussian Noise + Mixup)
-                x = add_gaussian_noise(x, std=0.05)
+                # Apply Strong Augmentations
+                x = augment_tensor(x, std=0.05)
                 x, targets_a, targets_b, lam = mixup_data(x, targets, alpha=0.2, use_cuda=use_cuda)
                 
                 features = net(x)
-                outputs = metric_fc(features, targets) # ArcFace requires targets for margin penalty during training
+                outputs = metric_fc(features, targets)
                 loss = mixup_criterion(criterion, outputs, targets_a, targets_b, lam)
             else:
                 outputs = net(x1, x2, x3, x4, x5)
@@ -216,6 +254,14 @@ if __name__ == "__main__":
 
 
     for epoch in range(start_epoch, start_epoch+args.num_epoch):
+        # Unfreeze early layers after freeze_epochs
+        if args.model == 'transformer' and epoch == args.freeze_epochs:
+            actual_net = net.module if hasattr(net, 'module') else net
+            actual_net.unfreeze_all()
+            print(f'\n==> Unfreezing all layers at epoch {epoch}')
+            # Re-count trainable parameters after unfreezing
+            num_parameters = sum(p.numel() for p in net.parameters() if p.requires_grad)
+            print(f'==> Trainable parameters now: {num_parameters}')
+        
         train(epoch)
         test(epoch)
-

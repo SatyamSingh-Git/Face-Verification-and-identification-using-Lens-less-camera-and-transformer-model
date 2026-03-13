@@ -49,13 +49,13 @@ if __name__ == "__main__":
     args = parse_args()    
 
     if args.model == 'transformer':
-        net = HybridResNetTransformer(in_channels=15, embed_dim=512, depth=4, num_heads=8).cuda()
+        net = HybridResNetTransformer(in_channels=15, embed_dim=512, depth=4, num_heads=8, out_dim=768).cuda()
         checkpoint = torch.load(args.weights)
         if isinstance(checkpoint, dict) and 'net' in checkpoint:
             net.load_state_dict(checkpoint['net'])
         else:
             net.load_state_dict(checkpoint) # fallback
-        # The HybridResNetTransformer natively outputs 512D embeddings!
+        # The HybridResNetTransformer natively outputs 768D embeddings!
     else:
         net = proposed_net(3).cuda()
         net.load_state_dict(torch.load(args.weights))
