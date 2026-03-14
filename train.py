@@ -87,6 +87,7 @@ def parse_args():
     parser.add_argument('--model', default='cnn', type=str, choices=['cnn', 'transformer'], help='Model type: cnn or transformer')
     parser.add_argument('--warmup_epochs', default=5, type=int, help='Number of warmup epochs')
     parser.add_argument('--freeze_epochs', default=10, type=int, help='Freeze early ResNet layers for this many epochs')
+    parser.add_argument('--resume', default=None, type=str, help='Path to last.pth checkpoint to resume training from')
 
     return parser.parse_args()
 
@@ -145,6 +146,43 @@ if __name__ == "__main__":
     else:
         optimizer = optim.SGD(net.parameters(), lr=args.lr, momentum=0.9, weight_decay=5e-4)
         scheduler = StepLR(optimizer, 50)
+
+    # Resume from checkpoint if specified
+    if args.resume is not None:
+        print(f'==> Resuming from checkpoint: {args.resume}')
+        ckpt = torch.load(args.resume, map_location='cuda' if use_cuda else 'cpu')
+        
+        # Load model weights
+        if hasattr(net, 'module'):
+            net.module.load_state_dict(ckpt['net'])
+        else:
+            net.load_state_dict(ckpt['net'])
+        
+        # Load ArcFace weights if transformer
+        if args.model == 'transformer' and 'metric_fc' in ckpt:
+            metric_fc.load_state_dict(ckpt['metric_fc'])
+        
+        # Load optimizer and scheduler state
+        optimizer.load_state_dict(ckpt['optimizer'])
+        scheduler.load_state_dict(ckpt['scheduler'])
+        
+        start_epoch = ckpt['epoch'] + 1
+        best_acc = ckpt['best_acc']
+        
+        # If resuming past freeze_epochs, make sure layers are unfrozen
+        if args.model == 'transformer' and start_epoch >= args.freeze_epochs:
+            actual_net = net.module if hasattr(net, 'module') else net
+            actual_net.unfreeze_all()
+            print('==> Layers already unfrozen (past freeze epoch)')
+        
+        # Use the same log_dir from the checkpoint
+        if 'log_dir' in ckpt:
+            log_dir = ckpt['log_dir']
+            if not os.path.isdir(log_dir):
+                os.makedirs(log_dir)
+            writer = SummaryWriter(log_dir=log_dir)
+        
+        print(f'==> Resuming from epoch {start_epoch}, best_acc={best_acc:.2f}%')
 
     # Training
     def train(epoch):
@@ -259,9 +297,22 @@ if __name__ == "__main__":
             actual_net = net.module if hasattr(net, 'module') else net
             actual_net.unfreeze_all()
             print(f'\n==> Unfreezing all layers at epoch {epoch}')
-            # Re-count trainable parameters after unfreezing
             num_parameters = sum(p.numel() for p in net.parameters() if p.requires_grad)
             print(f'==> Trainable parameters now: {num_parameters}')
         
         train(epoch)
         test(epoch)
+        
+        # Save resumable checkpoint every epoch
+        net_state = net.module.state_dict() if hasattr(net, 'module') else net.state_dict()
+        last_state = {
+            'net': net_state,
+            'optimizer': optimizer.state_dict(),
+            'scheduler': scheduler.state_dict(),
+            'epoch': epoch,
+            'best_acc': best_acc,
+            'log_dir': log_dir
+        }
+        if args.model == 'transformer':
+            last_state['metric_fc'] = metric_fc.state_dict()
+        torch.save(last_state, os.path.join(log_dir, 'last.pth'))
