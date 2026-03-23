@@ -6,25 +6,36 @@ import os
 
 
 class HybridResNetTransformer(nn.Module):
-    def __init__(self, in_channels=15, embed_dim=512, depth=4, num_heads=8, out_dim=768):
+    def __init__(self, in_channels=15, embed_dim=512, depth=4, num_heads=8, out_dim=768, backbone='resnet18'):
         super(HybridResNetTransformer, self).__init__()
 
         self.embed_dim = embed_dim
         self.out_dim = out_dim
+        self.backbone_name = backbone
 
-        # 1. Pretrained ResNet18 Backbone (with offline fallback)
+        # 1. Pretrained ResNet Backbone (with offline fallback)
+        WEIGHT_FILES = {
+            'resnet18': 'resnet18-f37072fd.pth',
+            'resnet34': 'resnet34-b627a593.pth',
+        }
+        resnet_factory = {
+            'resnet18': models.resnet18,
+            'resnet34': models.resnet34,
+        }
+        if backbone not in resnet_factory:
+            raise ValueError(f"Unsupported backbone: {backbone}. Choose from {list(resnet_factory.keys())}")
+
         try:
-            resnet = models.resnet18(pretrained=True)
+            resnet = resnet_factory[backbone](pretrained=True)
         except Exception:
-            # Offline fallback: load from local file
-            resnet = models.resnet18(pretrained=False)
+            resnet = resnet_factory[backbone](pretrained=False)
             local_weights = os.path.join(os.path.dirname(os.path.dirname(__file__)),
-                                          'resnet18-f37072fd.pth')
+                                          WEIGHT_FILES[backbone])
             if os.path.exists(local_weights):
                 resnet.load_state_dict(torch.load(local_weights, map_location='cpu'))
-                print(f'  [INFO] Loaded ResNet18 weights from local file: {local_weights}')
+                print(f'  [INFO] Loaded {backbone} weights from local file: {local_weights}')
             else:
-                print(f'  [WARN] No pretrained ResNet18 weights found. Training from scratch.')
+                print(f'  [WARN] No pretrained {backbone} weights found. Training from scratch.')
 
 
         # Modify conv1 to accept 15 channels (5 DCT subbands x 3ch)

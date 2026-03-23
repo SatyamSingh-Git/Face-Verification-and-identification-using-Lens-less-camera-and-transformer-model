@@ -131,6 +131,8 @@ def parse_args():
     parser.add_argument('--arcface_m', default=0.5, type=float, help='ArcFace margin')
     parser.add_argument('--arcface_s', default=64.0, type=float, help='ArcFace scale')
     parser.add_argument('--arcface_k', default=3, type=int, help='ArcFace sub-center count')
+    parser.add_argument('--backbone', default='resnet18', type=str, choices=['resnet18', 'resnet34'],
+                        help='CNN backbone: resnet18 (default) or resnet34')
 
     # Tier-1 improvements
     parser.add_argument('--label_smoothing', default=0.1, type=float, help='Label smoothing factor (0 = off, 0.1 recommended)')
@@ -195,8 +197,9 @@ if __name__ == "__main__":
     # Model
     print('==> Building model..')
     if args.model == 'transformer':
-        net = HybridResNetTransformer(in_channels=15, embed_dim=512, depth=4, num_heads=8, out_dim=768)
+        net = HybridResNetTransformer(in_channels=15, embed_dim=512, depth=4, num_heads=8, out_dim=768, backbone=args.backbone)
         metric_fc = ArcMarginProduct(768, 87, s=args.arcface_s, m=args.arcface_m, K=args.arcface_k)
+        print(f'==> Backbone: {args.backbone}')
         print(f'==> ArcFace config: s={args.arcface_s}, m={args.arcface_m}, K={args.arcface_k}')
         print(f'==> Mixup: {"ON" if not args.no_mixup else "OFF"}')
         if is_tpu or use_cuda:

@@ -39,6 +39,8 @@ def parse_args():
     parser.add_argument('--model', default='cnn', type=str, choices=['cnn', 'transformer'], help='Model type: cnn or transformer')
     parser.add_argument('--no_tta', action='store_true', help='Disable Test-Time Augmentation')
     parser.add_argument('--arcface_k', default=3, type=int, help='ArcFace sub-center count (must match training config)')
+    parser.add_argument('--backbone', default='resnet18', type=str, choices=['resnet18', 'resnet34'],
+                        help='CNN backbone (must match training config)')
 
     return parser.parse_args()
 
@@ -48,7 +50,7 @@ if __name__ == "__main__":
     use_cuda = torch.cuda.is_available()
 
     if args.model == 'transformer':
-        net = HybridResNetTransformer(in_channels=15, embed_dim=512, depth=4, num_heads=8, out_dim=768)
+        net = HybridResNetTransformer(in_channels=15, embed_dim=512, depth=4, num_heads=8, out_dim=768, backbone=args.backbone)
         metric_fc = ArcMarginProduct(768, 87, s=64.0, m=0.5, K=args.arcface_k)
         
         checkpoint = torch.load(args.weights, map_location='cuda' if use_cuda else 'cpu')

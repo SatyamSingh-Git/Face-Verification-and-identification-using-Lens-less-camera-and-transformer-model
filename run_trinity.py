@@ -103,6 +103,11 @@ def build_parser():
     parser.add_argument("--restart_tmult",   type=int, default=2,
                         help="T_mult for warm restarts")
 
+    # Tier-2: backbone selection
+    parser.add_argument("--backbone",         type=str, default="resnet18",
+                        choices=["resnet18", "resnet34"],
+                        help="CNN backbone: resnet18 (default) or resnet34")
+
     # Workflow control
     parser.add_argument("--skip_training",   action="store_true",
                         help="Skip training; only run evaluation on existing checkpoint")
@@ -112,6 +117,8 @@ def build_parser():
                         help="Run all batch experiments sequentially (overnight mode)")
     parser.add_argument("--batch_tier1",     action="store_true",
                         help="Run Tier-1 accuracy improvement experiments")
+    parser.add_argument("--batch_tier2",     action="store_true",
+                        help="Run Tier-2 ResNet34 backbone experiments")
 
     return parser
 
@@ -180,6 +187,28 @@ BATCH_EXPERIMENTS_T1 = [
     },
 ]
 
+# Tier-2: ResNet34 backbone experiments (using best Tier-1 config: LS + SWA)
+BATCH_EXPERIMENTS_T2 = [
+    {
+        "name": "t2_resnet34",
+        "desc": "T2-Exp 1/2: ResNet34 + LS + SWA (250ep, m=0.35)",
+        "overrides": {
+            "num_epoch": 250, "arcface_m": 0.35,
+            "label_smoothing": 0.1, "use_swa": True,
+            "backbone": "resnet34",
+        },
+    },
+    {
+        "name": "t2_resnet34_wr",
+        "desc": "T2-Exp 2/2: ResNet34 + LS + SWA + Warm Restarts (250ep, m=0.35)",
+        "overrides": {
+            "num_epoch": 250, "arcface_m": 0.35,
+            "label_smoothing": 0.1, "use_swa": True,
+            "use_warm_restarts": True, "restart_t0": 50, "restart_tmult": 2,
+            "backbone": "resnet34",
+        },
+    },
+]
 
 # =============================================================================
 # HELPERS
@@ -281,6 +310,7 @@ def run_training(args) -> None:
         "--arcface_m",   str(args.arcface_m),
         "--arcface_s",   str(args.arcface_s),
         "--arcface_k",   str(args.arcface_k),
+        "--backbone",    args.backbone,
         "--label_smoothing", str(args.label_smoothing),
     ]
     # Tier-1 flags (only add if enabled — they are store_true in train.py)
@@ -308,6 +338,7 @@ def run_recognition_test(args, weights_path: Path) -> None:
         "--batch_size",  str(args.test_batch_size),
         "--num_workers", str(args.num_workers),
         "--arcface_k",   str(args.arcface_k),
+        "--backbone",    args.backbone,
     ]
     if args.no_tta:
         cmd.append("--no_tta")
@@ -642,8 +673,13 @@ def main():
         print_header("STEP 3: SKIPPED (deps pre-installed, use --do_install to force)")
 
     # ── Batch mode: run all experiments ───────────────────────────────────────
-    if args.batch_experiments or args.batch_tier1:
-        experiments = BATCH_EXPERIMENTS_T1 if args.batch_tier1 else BATCH_EXPERIMENTS
+    if args.batch_experiments or args.batch_tier1 or args.batch_tier2:
+        if args.batch_tier2:
+            experiments = BATCH_EXPERIMENTS_T2
+        elif args.batch_tier1:
+            experiments = BATCH_EXPERIMENTS_T1
+        else:
+            experiments = BATCH_EXPERIMENTS
         print_header("BATCH MODE: Running {} experiments sequentially".format(
             len(experiments)))
         for i, exp in enumerate(experiments):
