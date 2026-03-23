@@ -1,6 +1,6 @@
 # Face Verification and Identification Using Lensless Camera and Transformer Model
 
-A deep learning pipeline for **face recognition** and **face verification** on **lensless (FlatCam) sensor data** using DCT-domain frequency representations. This project evolves from a baseline 5-branch CNN to a state-of-the-art **Hybrid ResNet18 + Transformer + Sub-center ArcFace** architecture achieving **97.62% recognition accuracy** and **0.9689 verification AUC** on a challenging 87-identity lensless dataset.
+A deep learning pipeline for **face recognition** and **face verification** on **lensless (FlatCam) sensor data** using DCT-domain frequency representations. This project evolves from a baseline 5-branch CNN to a state-of-the-art **Hybrid ResNet18 + Transformer + Sub-center ArcFace** architecture achieving **97.94% recognition accuracy** and **0.9763 verification AUC** on a challenging 87-identity lensless dataset.
 
 ---
 
@@ -13,6 +13,7 @@ A deep learning pipeline for **face recognition** and **face verification** on *
   - [Phase 2: Pure DCT-ViT Transformer](#phase-2-pure-dct-vit-transformer)
   - [Phase 3: Hybrid ResNet18 + Transformer + ArcFace](#phase-3-hybrid-resnet18--transformer--arcface)
   - [Phase 4: Advanced Optimizations (Current)](#phase-4-advanced-optimizations-current)
+  - [Phase 7: Pushing Beyond 98% — Tier 1](#phase-7-pushing-beyond-98--tier-1-training-improvements)
 - [Results Summary](#results-summary)
 - [Project Structure](#project-structure)
 - [Training](#training)
@@ -318,6 +319,46 @@ python run_trinity.py --batch_experiments  # Runs all 4 sequentially
 
 ---
 
+### Phase 7: Pushing Beyond 98% — Tier 1 Training Improvements
+
+Building on the 97.62% best from Phase 6, we implemented five complementary training and regularization improvements designed to reduce test-time variance and lift the stable accuracy floor.
+
+**Problem Identified:** Training logs showed massive test accuracy oscillations (96% → 72% → 96% between epochs), indicating the model sits on a sharp loss landscape. The "97.62% best" was a lucky peak rather than a stable floor.
+
+**Improvements Implemented:**
+
+1. **Label Smoothing (ε=0.1)** — Prevents overconfident predictions by softening one-hot labels. Applied via `nn.CrossEntropyLoss(label_smoothing=0.1)`.
+2. **Stochastic Weight Averaging (SWA)** — Averages model weights over the last 25% of training epochs, finding flatter minima. Saves an additional `swa_best.pth` checkpoint.
+3. **CutMix Augmentation** — Cuts patches from one image and pastes onto another. Applied 50/50 per batch alongside Mixup.
+4. **5-View Test-Time Augmentation** — Upgraded from 3-view to 5-view by adding center-crop (90%) and brightness shift (+10%).
+5. **Cosine Annealing with Warm Restarts (SGDR)** — Periodic LR resets (T₀=50, T_mult=2) to escape local minima.
+
+**Experiment Results (Stacking Approach):**
+
+| # | Experiment | Features Enabled | Recognition Acc | Verification AUC |
+|---|-----------|-----------------|----------------|------------------|
+| 1 | `t1_label_smooth` | Label Smoothing 0.1 | 97.50% | 0.9736 |
+| 2 | `t1_ls_swa` 🏆 | + SWA (last 25% epochs) | **97.94%** 🥇 | **0.9763** |
+| 3 | `t1_ls_swa_cutmix` | + CutMix (50/50 with Mixup) | 94.09% | **0.9969** 🥇 |
+| 4 | `t1_full` | + Warm Restarts (K=3) | 94.61% | 0.9950 |
+| 5 | `t1_swa_wr_k5` | + Warm Restarts + K=5 (no CutMix) | 96.67% | 0.9676 |
+
+All experiments: 250 epochs, m=0.35, 5-view TTA active at test time.
+
+**Key Findings:**
+1. **🏆 SWA pushed recognition to 97.94%** — new all-time best, validating weight averaging for flatter minima. Best model: `t1_ls_swa`
+2. **CutMix dramatically improved verification AUC to 0.9969** but dropped recognition to 94.09% — reveals a recognition vs. verification trade-off
+3. **Warm Restarts** partially recovered recognition when CutMix was present (+0.5%), but didn't help without CutMix
+4. **K=5 sub-centers hurt both metrics** when combined with SWA + Warm Restarts
+5. **Final verdict:** Label Smoothing + SWA (K=3, m=0.35) is the optimal combination for recognition. CutMix only if verification AUC is the priority
+
+**Run command:**
+```bash
+python run_trinity.py --batch_tier1
+```
+
+---
+
 ## Results Summary
 
 | Model | Recognition Acc | Verification AUC | Top-5 Acc | Parameters |
@@ -331,11 +372,16 @@ python run_trinity.py --batch_experiments  # Runs all 4 sequentially
 | Ablation: Tuned ArcFace (m=0.4, s=40, K=3, batch=64, 120ep) | 94.73% | 0.9595 | 99.17% | ~24.5M |
 | Extended Training (m=0.4, K=3, 150ep, A6000) | 96.67% | 0.9699 | 99.68% | ~24.5M |
 | Batch Exp: 200ep (m=0.4, K=3) | 97.46% | 0.9655 | 99.80% | ~24.5M |
-| **Batch Exp: 200ep (m=0.35, K=3)** 🏆 | **97.62%** 🥇 | **0.9689** | **99.80%** | ~24.5M |
-| Batch Exp: 200ep (m=0.4, K=5) | 96.63% | **0.9705** 🥇 | 99.56% | ~24.8M |
-| Batch Exp: 200ep (m=0.35, K=5) | 96.63% | **0.9705** 🥇 | 99.56% | ~24.8M |
+| Batch Exp: 200ep (m=0.35, K=3) | 97.62% | 0.9689 | 99.80% | ~24.5M |
+| Batch Exp: 200ep (m=0.4, K=5) | 96.63% | 0.9705 | 99.56% | ~24.8M |
+| Batch Exp: 200ep (m=0.35, K=5) | 96.63% | 0.9705 | 99.56% | ~24.8M |
 | Ablation: Tuned ArcFace (m=0.4, s=40, K=3, batch=128) | 94.21% | 0.9285 | 99.37% | ~24.5M |
 | Ablation: Tuned ArcFace (m=0.4, s=40, K=3, batch=512) | 89.54% | 0.9265 | 97.86% | ~24.5M |
+| T1: + Label Smoothing (250ep, m=0.35) | 97.50% | 0.9736 | 99.64% | ~24.5M |
+| **T1: + Label Smoothing + SWA (250ep, m=0.35)** 🏆 | **97.94%** 🥇 | **0.9763** | **99.88%** | ~24.5M |
+| T1: + LS + SWA + CutMix (250ep, m=0.35) | 94.09% | **0.9969** 🥇 | 99.45% | ~24.5M |
+| T1: Full Tier-1 + Warm Restarts (250ep, m=0.35) | 94.61% | 0.9950 | 99.25% | ~24.5M |
+| T1: SWA + Warm Restarts + K=5 (250ep, m=0.35) | 96.67% | 0.9676 | 99.29% | ~24.8M |
 
 ---
 
