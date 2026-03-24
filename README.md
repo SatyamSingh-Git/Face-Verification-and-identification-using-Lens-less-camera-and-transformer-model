@@ -14,6 +14,7 @@ A deep learning pipeline for **face recognition** and **face verification** on *
   - [Phase 3: Hybrid ResNet18 + Transformer + ArcFace](#phase-3-hybrid-resnet18--transformer--arcface)
   - [Phase 4: Advanced Optimizations (Current)](#phase-4-advanced-optimizations-current)
   - [Phase 7: Pushing Beyond 98% — Tier 1](#phase-7-pushing-beyond-98--tier-1-training-improvements)
+  - [Phase 8: ResNet34 Backbone — Tier 2](#phase-8-resnet34-backbone--tier-2)
 - [Results Summary](#results-summary)
 - [Project Structure](#project-structure)
 - [Training](#training)
@@ -342,6 +343,7 @@ Building on the 97.62% best from Phase 6, we implemented five complementary trai
 | 3 | `t1_ls_swa_cutmix` | + CutMix (50/50 with Mixup) | 94.09% | **0.9969** 🥇 |
 | 4 | `t1_full` | + Warm Restarts (K=3) | 94.61% | 0.9950 |
 | 5 | `t1_swa_wr_k5` | + Warm Restarts + K=5 (no CutMix) | 96.67% | 0.9676 |
+| 6 | `t1_ls_swa_wr` | LS + SWA + Warm Restarts (no CutMix, K=3) | 97.38% | 0.9720 |
 
 All experiments: 250 epochs, m=0.35, 5-view TTA active at test time.
 
@@ -355,6 +357,25 @@ All experiments: 250 epochs, m=0.35, 5-view TTA active at test time.
 **Run command:**
 ```bash
 python run_trinity.py --batch_tier1
+```
+
+---
+
+### Phase 8: ResNet34 Backbone — Tier 2
+
+Hypothesis: A deeper CNN backbone (ResNet34, +10M params) could extract richer features from lensless data, pushing recognition beyond 97.94%.
+
+**Why ResNet34?** Same output shape as ResNet18 (512×7×7) — drop-in replacement, no changes to Transformer or ArcFace needed.
+
+| # | Experiment | Config | Recognition Acc |
+|---|-----------|--------|----------------|
+| 1 | `t2_resnet34` | ResNet34 + LS + SWA | 96.63% |
+| 2 | `t2_resnet34_wr` | ResNet34 + LS + SWA + Warm Restarts | 96.51% |
+
+**Conclusion:** ResNet34 **hurt accuracy** (−1.3%). The deeper backbone overfits on this small 22K-sample dataset — ResNet18's lighter capacity is better suited for lensless face data. **ResNet18 + LS + SWA remains the best at 97.94%.**
+
+```bash
+python run_trinity.py --batch_tier2
 ```
 
 ---
@@ -382,6 +403,9 @@ python run_trinity.py --batch_tier1
 | T1: + LS + SWA + CutMix (250ep, m=0.35) | 94.09% | **0.9969** 🥇 | 99.45% | ~24.5M |
 | T1: Full Tier-1 + Warm Restarts (250ep, m=0.35) | 94.61% | 0.9950 | 99.25% | ~24.5M |
 | T1: SWA + Warm Restarts + K=5 (250ep, m=0.35) | 96.67% | 0.9676 | 99.29% | ~24.8M |
+| T1: LS + SWA + Warm Restarts (250ep, m=0.35, K=3) | 97.38% | 0.9720 | 99.68% | ~24.5M |
+| T2: ResNet34 + LS + SWA (250ep, m=0.35) | 96.63% | — | — | ~34.5M |
+| T2: ResNet34 + LS + SWA + WR (250ep, m=0.35) | 96.51% | — | — | ~34.5M |
 
 ---
 
