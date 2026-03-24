@@ -134,6 +134,11 @@ def parse_args():
     parser.add_argument('--backbone', default='resnet18', type=str, choices=['resnet18', 'resnet34'],
                         help='CNN backbone: resnet18 (default) or resnet34')
 
+    # Tier-3 improvements
+    parser.add_argument('--input_size', default=224, type=int, help='Input resolution (224 default, try 112)')
+    parser.add_argument('--use_gem', action='store_true', help='Use GeM pooling instead of mean pooling')
+    parser.add_argument('--embed_dropout', default=0.0, type=float, help='Dropout before projection head (0=off, 0.1 recommended)')
+
     # Tier-1 improvements
     parser.add_argument('--label_smoothing', default=0.1, type=float, help='Label smoothing factor (0 = off, 0.1 recommended)')
     parser.add_argument('--use_swa', action='store_true', help='Enable Stochastic Weight Averaging')
@@ -197,7 +202,9 @@ if __name__ == "__main__":
     # Model
     print('==> Building model..')
     if args.model == 'transformer':
-        net = HybridResNetTransformer(in_channels=15, embed_dim=512, depth=4, num_heads=8, out_dim=768, backbone=args.backbone)
+        net = HybridResNetTransformer(in_channels=15, embed_dim=512, depth=4, num_heads=8, out_dim=768,
+                                      backbone=args.backbone, input_size=args.input_size,
+                                      use_gem=args.use_gem, embed_dropout=args.embed_dropout)
         metric_fc = ArcMarginProduct(768, 87, s=args.arcface_s, m=args.arcface_m, K=args.arcface_k)
         print(f'==> Backbone: {args.backbone}')
         print(f'==> ArcFace config: s={args.arcface_s}, m={args.arcface_m}, K={args.arcface_k}')

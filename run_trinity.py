@@ -108,6 +108,14 @@ def build_parser():
                         choices=["resnet18", "resnet34"],
                         help="CNN backbone: resnet18 (default) or resnet34")
 
+    # Tier-3 improvements
+    parser.add_argument("--input_size",       type=int, default=224,
+                        help="Input resolution (224 default, try 112)")
+    parser.add_argument("--use_gem",          action="store_true",
+                        help="Use GeM pooling instead of mean pooling")
+    parser.add_argument("--embed_dropout",    type=float, default=0.0,
+                        help="Dropout before projection head (0=off)")
+
     # Workflow control
     parser.add_argument("--skip_training",   action="store_true",
                         help="Skip training; only run evaluation on existing checkpoint")
@@ -119,6 +127,8 @@ def build_parser():
                         help="Run Tier-1 accuracy improvement experiments")
     parser.add_argument("--batch_tier2",     action="store_true",
                         help="Run Tier-2 ResNet34 backbone experiments")
+    parser.add_argument("--batch_tier3",     action="store_true",
+                        help="Run Tier-3 resolution/GeM/dropout experiments")
 
     return parser
 
@@ -206,6 +216,37 @@ BATCH_EXPERIMENTS_T2 = [
             "label_smoothing": 0.1, "use_swa": True,
             "use_warm_restarts": True, "restart_t0": 50, "restart_tmult": 2,
             "backbone": "resnet34",
+        },
+    },
+]
+
+# Tier-3: Resolution + GeM + Dropout experiments (stacking on best Tier-1: LS + SWA)
+BATCH_EXPERIMENTS_T3 = [
+    {
+        "name": "t3_res112",
+        "desc": "T3-Exp 1/3: Reduced resolution 112x112 + LS + SWA",
+        "overrides": {
+            "num_epoch": 250, "arcface_m": 0.35,
+            "label_smoothing": 0.1, "use_swa": True,
+            "input_size": 112,
+        },
+    },
+    {
+        "name": "t3_res112_gem",
+        "desc": "T3-Exp 2/3: + GeM pooling",
+        "overrides": {
+            "num_epoch": 250, "arcface_m": 0.35,
+            "label_smoothing": 0.1, "use_swa": True,
+            "input_size": 112, "use_gem": True,
+        },
+    },
+    {
+        "name": "t3_res112_gem_drop",
+        "desc": "T3-Exp 3/3: + Embedding Dropout 0.1",
+        "overrides": {
+            "num_epoch": 250, "arcface_m": 0.35,
+            "label_smoothing": 0.1, "use_swa": True,
+            "input_size": 112, "use_gem": True, "embed_dropout": 0.1,
         },
     },
 ]
@@ -311,8 +352,13 @@ def run_training(args) -> None:
         "--arcface_s",   str(args.arcface_s),
         "--arcface_k",   str(args.arcface_k),
         "--backbone",    args.backbone,
+        "--input_size",  str(args.input_size),
+        "--embed_dropout", str(args.embed_dropout),
         "--label_smoothing", str(args.label_smoothing),
     ]
+    # Tier-3 flags
+    if getattr(args, 'use_gem', False):
+        train_cmd.append("--use_gem")
     # Tier-1 flags (only add if enabled — they are store_true in train.py)
     if getattr(args, 'use_swa', False):
         train_cmd.append("--use_swa")
@@ -339,7 +385,11 @@ def run_recognition_test(args, weights_path: Path) -> None:
         "--num_workers", str(args.num_workers),
         "--arcface_k",   str(args.arcface_k),
         "--backbone",    args.backbone,
+        "--input_size",  str(args.input_size),
+        "--embed_dropout", str(args.embed_dropout),
     ]
+    if getattr(args, 'use_gem', False):
+        cmd.append("--use_gem")
     if args.no_tta:
         cmd.append("--no_tta")
     run_cmd(cmd, cwd=str(REPO_PATH), desc="STEP 6a: Face Recognition Test")
@@ -673,8 +723,10 @@ def main():
         print_header("STEP 3: SKIPPED (deps pre-installed, use --do_install to force)")
 
     # ── Batch mode: run all experiments ───────────────────────────────────────
-    if args.batch_experiments or args.batch_tier1 or args.batch_tier2:
-        if args.batch_tier2:
+    if args.batch_experiments or args.batch_tier1 or args.batch_tier2 or args.batch_tier3:
+        if args.batch_tier3:
+            experiments = BATCH_EXPERIMENTS_T3
+        elif args.batch_tier2:
             experiments = BATCH_EXPERIMENTS_T2
         elif args.batch_tier1:
             experiments = BATCH_EXPERIMENTS_T1

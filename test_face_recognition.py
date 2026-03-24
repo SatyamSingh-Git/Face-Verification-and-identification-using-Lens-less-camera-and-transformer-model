@@ -41,6 +41,9 @@ def parse_args():
     parser.add_argument('--arcface_k', default=3, type=int, help='ArcFace sub-center count (must match training config)')
     parser.add_argument('--backbone', default='resnet18', type=str, choices=['resnet18', 'resnet34'],
                         help='CNN backbone (must match training config)')
+    parser.add_argument('--input_size', default=224, type=int, help='Input resolution (must match training config)')
+    parser.add_argument('--use_gem', action='store_true', help='Use GeM pooling (must match training config)')
+    parser.add_argument('--embed_dropout', default=0.0, type=float, help='Embedding dropout (must match training config)')
 
     return parser.parse_args()
 
@@ -50,7 +53,9 @@ if __name__ == "__main__":
     use_cuda = torch.cuda.is_available()
 
     if args.model == 'transformer':
-        net = HybridResNetTransformer(in_channels=15, embed_dim=512, depth=4, num_heads=8, out_dim=768, backbone=args.backbone)
+        net = HybridResNetTransformer(in_channels=15, embed_dim=512, depth=4, num_heads=8, out_dim=768,
+                                      backbone=args.backbone, input_size=args.input_size,
+                                      use_gem=args.use_gem, embed_dropout=args.embed_dropout)
         metric_fc = ArcMarginProduct(768, 87, s=64.0, m=0.5, K=args.arcface_k)
         
         checkpoint = torch.load(args.weights, map_location='cuda' if use_cuda else 'cpu')

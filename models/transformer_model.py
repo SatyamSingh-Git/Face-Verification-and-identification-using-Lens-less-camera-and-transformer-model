@@ -5,13 +5,27 @@ import torchvision.models as models
 import os
 
 
+class GeM(nn.Module):
+    """Generalized Mean Pooling — learns optimal balance between avg and max pooling."""
+    def __init__(self, p=3.0, eps=1e-6):
+        super().__init__()
+        self.p = nn.Parameter(torch.ones(1) * p)
+        self.eps = eps
+
+    def forward(self, x):
+        # x: (B, N, D) — sequence of tokens
+        return x.clamp(min=self.eps).pow(self.p).mean(dim=1).pow(1.0 / self.p)
+
+
 class HybridResNetTransformer(nn.Module):
-    def __init__(self, in_channels=15, embed_dim=512, depth=4, num_heads=8, out_dim=768, backbone='resnet18'):
+    def __init__(self, in_channels=15, embed_dim=512, depth=4, num_heads=8, out_dim=768,
+                 backbone='resnet18', input_size=224, use_gem=False, embed_dropout=0.0):
         super(HybridResNetTransformer, self).__init__()
 
         self.embed_dim = embed_dim
         self.out_dim = out_dim
         self.backbone_name = backbone
+        self.input_size = input_size
 
         # 1. Pretrained ResNet Backbone (with offline fallback)
         WEIGHT_FILES = {
@@ -56,8 +70,13 @@ class HybridResNetTransformer(nn.Module):
         self.layer3 = resnet.layer3
         self.layer4 = resnet.layer4
 
-        # 2. Positional Encoding for 7x7 = 49 tokens
-        self.pos_embed = nn.Parameter(torch.randn(1, 49, embed_dim) * 0.02)
+        # 2. Positional Encoding — token count depends on input resolution
+        # input_size=224 → 7x7=49 tokens, input_size=112 → 4x4=16 tokens
+        feat_size = input_size // 32  # ResNet downsamples 32×
+        num_tokens = feat_size * feat_size
+        self.num_tokens = num_tokens
+        self.pos_embed = nn.Parameter(torch.randn(1, num_tokens, embed_dim) * 0.02)
+        print(f'  [INFO] Input size: {input_size}×{input_size} → {feat_size}×{feat_size} = {num_tokens} tokens')
 
         # 3. Transformer Encoder
         encoder_layer = nn.TransformerEncoderLayer(
@@ -73,7 +92,20 @@ class HybridResNetTransformer(nn.Module):
             encoder_layer, num_layers=depth, norm=nn.LayerNorm(embed_dim)
         )
 
-        # 4. Projection head: 512 → out_dim (768)
+        # 4. Pooling — GeM (learnable) or standard mean pooling
+        self.use_gem = use_gem
+        if use_gem:
+            self.gem_pool = GeM(p=3.0)
+            print(f'  [INFO] Using GeM pooling (learnable p, init=3.0)')
+        else:
+            print(f'  [INFO] Using mean pooling')
+
+        # 5. Embedding Dropout (before projection)
+        self.embed_dropout = nn.Dropout(embed_dropout) if embed_dropout > 0 else nn.Identity()
+        if embed_dropout > 0:
+            print(f'  [INFO] Embedding dropout: {embed_dropout}')
+
+        # 6. Projection head: 512 → out_dim (768)
         self.projection = nn.Sequential(
             nn.Linear(embed_dim, out_dim),
             nn.BatchNorm1d(out_dim),
@@ -90,17 +122,23 @@ class HybridResNetTransformer(nn.Module):
         out = self.layer1(out)
         out = self.layer2(out)
         out = self.layer3(out)
-        out = self.layer4(out)  # (B, 512, 7, 7)
+        out = self.layer4(out)  # (B, 512, H, W)
 
         # Tokenize: flatten spatial dims
-        out = out.flatten(2).transpose(1, 2)  # (B, 49, 512)
+        out = out.flatten(2).transpose(1, 2)  # (B, num_tokens, 512)
         out = out + self.pos_embed
 
         # Transformer
         out = self.transformer_encoder(out)
 
-        # Global Mean Pooling
-        out = out.mean(dim=1)  # (B, 512)
+        # Pooling
+        if self.use_gem:
+            out = self.gem_pool(out)  # (B, 512)
+        else:
+            out = out.mean(dim=1)  # (B, 512)
+
+        # Embedding Dropout
+        out = self.embed_dropout(out)
 
         # Project to higher dim
         out = self.projection(out)  # (B, out_dim)
@@ -114,8 +152,8 @@ class HybridResNetTransformer(nn.Module):
         x: (B, 15, 64, 64)
         Returns: (B, out_dim) L2-normalized embedding
         """
-        # Resize to 224x224
-        x = F.interpolate(x, size=(224, 224), mode='bilinear', align_corners=False)
+        sz = self.input_size
+        x = F.interpolate(x, size=(sz, sz), mode='bilinear', align_corners=False)
 
         if not tta:
             return self._extract_feats(x)
@@ -127,9 +165,9 @@ class HybridResNetTransformer(nn.Module):
             feat_blur = self._extract_feats(TF.gaussian_blur(x, kernel_size=[3, 3]))
 
             # Center crop 90% and resize back
-            crop_size = int(224 * 0.9)  # 201
+            crop_size = int(sz * 0.9)
             x_crop = TF.center_crop(x, [crop_size, crop_size])
-            x_crop = F.interpolate(x_crop, size=(224, 224), mode='bilinear', align_corners=False)
+            x_crop = F.interpolate(x_crop, size=(sz, sz), mode='bilinear', align_corners=False)
             feat_crop = self._extract_feats(x_crop)
 
             # Brightness shift +10%
@@ -157,16 +195,23 @@ class HybridResNetTransformer(nn.Module):
 
 if __name__ == '__main__':
     from arcface import ArcMarginProduct
-    net = HybridResNetTransformer(embed_dim=512, out_dim=768)
-    metric_fc = ArcMarginProduct(768, 87, K=3)
+    # Test with default (224) and reduced (112) resolution
+    for sz in [224, 112]:
+        print(f"\n--- Testing input_size={sz} ---")
+        net = HybridResNetTransformer(embed_dim=512, out_dim=768, input_size=sz, use_gem=True, embed_dropout=0.1)
+        metric_fc = ArcMarginProduct(768, 87, K=3)
 
-    x = torch.randn(2, 15, 64, 64)
-    labels = torch.randint(0, 87, (2,))
+        x = torch.randn(2, 15, 64, 64)
+        labels = torch.randint(0, 87, (2,))
 
-    features = net(x)
-    print("Features shape:", features.size())  # Expected: (2, 768)
+        features = net(x)
+        print("Features shape:", features.size())
 
-    output = metric_fc(features, labels)
-    print("ArcFace Output shape:", output.size())  # Expected: (2, 87)
-    print("Model Parameters:", sum(p.numel() for p in net.parameters() if p.requires_grad))
-    print("ArcFace Parameters:", sum(p.numel() for p in metric_fc.parameters() if p.requires_grad))
+        output = metric_fc(features, labels)
+        print("ArcFace Output shape:", output.size())
+        print("Model Parameters:", sum(p.numel() for p in net.parameters() if p.requires_grad))
+
+
+
+
+
