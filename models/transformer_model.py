@@ -70,13 +70,22 @@ class HybridResNetTransformer(nn.Module):
         self.layer3 = resnet.layer3
         self.layer4 = resnet.layer4
 
-        # 2. Positional Encoding — token count depends on input resolution
-        # input_size=224 → 7x7=49 tokens, input_size=112 → 4x4=16 tokens
-        feat_size = input_size // 32  # ResNet downsamples 32×
-        num_tokens = feat_size * feat_size
+        # 2. Positional Encoding — compute token count dynamically (avoids padding miscalculation)
+        with torch.no_grad():
+            dummy = torch.zeros(1, in_channels, input_size, input_size)
+            dummy = self.conv1(dummy)
+            dummy = self.bn1(dummy)
+            dummy = self.relu(dummy)
+            dummy = self.maxpool(dummy)
+            dummy = self.layer1(dummy)
+            dummy = self.layer2(dummy)
+            dummy = self.layer3(dummy)
+            dummy = self.layer4(dummy)
+            feat_h, feat_w = dummy.shape[2], dummy.shape[3]
+        num_tokens = feat_h * feat_w
         self.num_tokens = num_tokens
         self.pos_embed = nn.Parameter(torch.randn(1, num_tokens, embed_dim) * 0.02)
-        print(f'  [INFO] Input size: {input_size}×{input_size} → {feat_size}×{feat_size} = {num_tokens} tokens')
+        print(f'  [INFO] Input size: {input_size}×{input_size} → {feat_h}×{feat_w} = {num_tokens} tokens')
 
         # 3. Transformer Encoder
         encoder_layer = nn.TransformerEncoderLayer(
